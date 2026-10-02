@@ -34,6 +34,14 @@ Saved files look like `notes/balance-d8da6bf26964-20261002T120000Z.json` (local 
 
 Default RPC: `https://ethereum.publicnode.com` (public). Override with `ETH_RPC_URL` in `.env`.
 
+## Tests
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -t . -v
+```
+
+GitHub Actions runs the same checks on every push to `main`.
+
 ## Notes
 
 - Mainnet only in v1.
