@@ -52,7 +52,10 @@ def utc_now_iso() -> str:
 
 
 def slug_for_filename(value: str, max_len: int = 12) -> str:
-    cleaned = re.sub(r"[^a-fA-F0-9]", "", value.lower())
+    raw = value.lower()
+    if raw.startswith("0x"):
+        raw = raw[2:]
+    cleaned = re.sub(r"[^a-fA-F0-9]", "", raw)
     return cleaned[:max_len] or "unknown"
 
 
