@@ -1,4 +1,5 @@
 .venv/
+notes/*.json
 __pycache__/
 *.pyc
 .env

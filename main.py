@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -16,6 +19,10 @@ load_dotenv()
 
 DEFAULT_RPC = "https://ethereum.publicnode.com"
 WEI_PER_ETH = Decimal(10) ** 18
+NOTES_DIR = Path(__file__).resolve().parent / "notes"
+
+# Vitalik's public address (handy default for demos / portfolio checks).
+VITALIK = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 
 
 def rpc_url() -> str:
@@ -40,7 +47,25 @@ def is_tx_hash(value: str) -> bool:
     return value.startswith("0x") and len(value) == 66
 
 
-def cmd_balance(address: str) -> None:
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def slug_for_filename(value: str, max_len: int = 12) -> str:
+    cleaned = re.sub(r"[^a-fA-F0-9]", "", value.lower())
+    return cleaned[:max_len] or "unknown"
+
+
+def save_note(kind: str, payload: dict) -> Path:
+    NOTES_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    key = slug_for_filename(payload.get("address") or payload.get("hash") or kind)
+    path = NOTES_DIR / f"{kind}-{key}-{stamp}.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def fetch_balance(address: str) -> dict:
     if not is_hex_address(address):
         raise SystemExit("Address must look like 0x + 40 hex chars")
     wei_hex = eth_rpc("eth_getBalance", [address, "latest"])
@@ -48,17 +73,27 @@ def cmd_balance(address: str) -> None:
         raise SystemExit("RPC returned empty balance")
     wei = int(wei_hex, 16)
     eth = Decimal(wei) / WEI_PER_ETH
-    print(json.dumps({"address": address, "wei": str(wei), "eth": format(eth, "f")}, indent=2))
+    return {
+        "type": "balance",
+        "queried_at": utc_now_iso(),
+        "rpc_url": rpc_url(),
+        "address": address,
+        "wei": str(wei),
+        "eth": format(eth, "f"),
+    }
 
 
-def cmd_tx(tx_hash: str) -> None:
+def fetch_tx(tx_hash: str) -> dict:
     if not is_tx_hash(tx_hash):
         raise SystemExit("Tx hash must look like 0x + 64 hex chars")
     tx = eth_rpc("eth_getTransactionByHash", [tx_hash])
     if not tx:
         raise SystemExit("Transaction not found")
     value_wei = int(tx.get("value") or "0x0", 16)
-    out = {
+    return {
+        "type": "transaction",
+        "queried_at": utc_now_iso(),
+        "rpc_url": rpc_url(),
         "hash": tx.get("hash"),
         "from": tx.get("from"),
         "to": tx.get("to"),
@@ -67,9 +102,29 @@ def cmd_tx(tx_hash: str) -> None:
         "value_wei": str(value_wei),
         "value_eth": format(Decimal(value_wei) / WEI_PER_ETH, "f"),
         "gas": tx.get("gas"),
-        "input_len": len(tx.get("input") or "0x") // 2 - 1,
+        "input_len": max(0, len(tx.get("input") or "0x") // 2 - 1),
     }
-    print(json.dumps(out, indent=2))
+
+
+def emit(payload: dict, save: bool) -> None:
+    print(json.dumps(payload, indent=2))
+    if save:
+        kind = "balance" if payload.get("type") == "balance" else "tx"
+        path = save_note(kind, payload)
+        print(f"Saved to {path}", file=sys.stderr)
+
+
+def cmd_balance(address: str, save: bool) -> None:
+    emit(fetch_balance(address), save)
+
+
+def cmd_tx(tx_hash: str, save: bool) -> None:
+    emit(fetch_tx(tx_hash), save)
+
+
+def cmd_snapshot(save: bool) -> None:
+    """Fetch Vitalik's balance and save (portfolio demo)."""
+    emit(fetch_balance(VITALIK), save)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,9 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_bal = sub.add_parser("balance", help="Show ETH balance for an address")
     p_bal.add_argument("address", help="0x-prefixed address")
+    p_bal.add_argument("--save", action="store_true", help="Write JSON snapshot under notes/")
 
     p_tx = sub.add_parser("tx", help="Show basic fields for a transaction hash")
     p_tx.add_argument("tx_hash", help="0x-prefixed transaction hash")
+    p_tx.add_argument("--save", action="store_true", help="Write JSON snapshot under notes/")
+
+    p_snap = sub.add_parser("snapshot", help=f"Balance check for Vitalik ({VITALIK[:10]}…)")
+    p_snap.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Print only; by default writes notes/",
+    )
 
     return parser
 
@@ -89,9 +153,12 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "balance":
-            cmd_balance(args.address)
+            cmd_balance(args.address, args.save)
         elif args.command == "tx":
-            cmd_tx(args.tx_hash)
+            cmd_tx(args.tx_hash, args.save)
+        elif args.command == "snapshot":
+            save = not args.no_save
+            cmd_snapshot(save)
         else:
             raise SystemExit(f"Unknown command: {args.command}")
     except (requests.RequestException, RuntimeError, ValueError) as exc:

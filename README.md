@@ -20,9 +20,17 @@ Optional: copy `.env.example` to `.env` and set a custom RPC URL.
 # ETH balance (checksum or lowercase address)
 python main.py balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 
+# Save a timestamped JSON file under notes/
+python main.py balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --save
+
+# Vitalik snapshot (writes notes/ by default)
+python main.py snapshot
+
 # Transaction by hash
-python main.py tx 0x...
+python main.py tx 0x... --save
 ```
+
+Saved files look like `notes/balance-d8da6bf26964-20261002T120000Z.json` (local only; `notes/*.json` is gitignored).
 
 Default RPC: `https://ethereum.publicnode.com` (public). Override with `ETH_RPC_URL` in `.env`.
 
